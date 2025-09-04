@@ -10,8 +10,8 @@ polars
 pillow
 tqdm
 pytz
-cairosvg
-cairocffi
 lxml
 tinycss2
 cssselect2
+cairocffi>=1.6.1
+CairoSVG>=2.7
