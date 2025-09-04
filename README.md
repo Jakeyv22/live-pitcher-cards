@@ -4,7 +4,7 @@ Live, per-game pitcher cards built on Statcast data. See pitch distribution, mov
 
 **Demo:** <YOUR_STREAMLIT_APP_URL>
 
-![Screenshot](assets/screenshot.png)
+![Screenshot](assets/paul_skenes_082925.png)
 
 ## Features
 - Live per-pitch data for the selected date & pitcher
