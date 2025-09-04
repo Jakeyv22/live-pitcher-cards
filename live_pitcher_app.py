@@ -258,6 +258,11 @@ with st.sidebar:
             )
             pitcher_id = selected_pitcher[0] if selected_pitcher else None
 
+    st.session_state["_current_selection"] = {
+        "pitcher_id": int(pitcher_id) if pitcher_id is not None else None,
+        "date_str": date.strftime("%Y-%m-%d"),
+    }
+
     # Actions
     generate = st.button("Generate", type="primary")
 
@@ -282,8 +287,22 @@ with st.sidebar:
         st.warning(st.session_state.pop("_sidebar_error"))
 
 # -------------------- Main panel --------------------
-
 params = st.session_state.get("last_params")
+curr   = st.session_state.get("_current_selection")
+
+selection_changed = False
+if curr is not None:
+    if params is None:
+        selection_changed = True
+    else:
+        selection_changed = (
+            curr.get("pitcher_id") != params.get("pitcher_id")
+            or curr.get("date_str")   != params.get("date_str")
+        )
+
+# If the user changed date/pitcher, hide the old chart until Generate is clicked
+if selection_changed:
+    st.session_state.generated = False
 
 if st.session_state.get("_trigger_generate", False) and params:
     # Show spinner ONLY on the click-triggered run
@@ -291,10 +310,11 @@ if st.session_state.get("_trigger_generate", False) and params:
     with st.spinner("Building pitcher dashboard..."):
         render_dashboard(params["pitcher_id"], params["date_str"])
 
-elif st.session_state.get("generated") and params:
-    # Persist the last dashboard without spinner on subsequent interactions
+elif st.session_state.get("generated") and params and not selection_changed:
+    # Persist the last dashboard while the selection hasn't changed
     render_dashboard(params["pitcher_id"], params["date_str"])
 
 else:
     st.info("Pick a date → level → team → pitcher, then click **Generate Dashboard**.")
+
 
