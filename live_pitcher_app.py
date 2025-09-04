@@ -185,7 +185,7 @@ with st.sidebar:
         st.stop()
 
     # Level selector (defaults to MLB when present)
-    levels = [lvl for lvl in ["MLB","AAA","AA","A+","A"] if lvl in df_pitchers["team_level"].unique()]
+    levels = [lvl for lvl in ["MLB","AAA","AA","A+","A","Rookie"] if lvl in df_pitchers["team_level"].unique()]
     level_default_idx = levels.index("MLB") if "MLB" in levels else 0
     level = st.selectbox("Level", levels, index=level_default_idx)
 
