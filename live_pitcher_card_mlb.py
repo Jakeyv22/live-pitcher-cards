@@ -295,20 +295,32 @@ def player_bio(pitcher_id: int, df: pd.DataFrame, ax: plt.Axes) -> None:
     ax.axis("off")
 
 
-def plot_logo(batter_id: int, ax: plt.Axes, size: int = 300) -> None:
+def _team_id_from_df(df: pd.DataFrame) -> int | None:
+    """Team the PITCHER played for in this game/date."""
+    if "pitcher_team_id" not in df.columns:
+        return None
+    s = pd.to_numeric(df["pitcher_team_id"], errors="coerce").dropna().astype(int)
+    if s.empty:
+        return None
+    # if multiple games/rows, use the most frequent team id
+    return int(s.mode().iat[0])
+
+def _fetch_logo_png(team_id: int, size: int = 300) -> bytes:
+    svg = requests.get(f"https://www.mlbstatic.com/team-logos/{team_id}.svg", timeout=6).content
+    return cairosvg.svg2png(bytestring=svg, output_width=size, output_height=size)
+
+def plot_logo(df_game: pd.DataFrame, ax: plt.Axes, *, size: int = 300) -> None:
+    ax.axis("off")
+    tid = _team_id_from_df(df_game)
+    if tid is None:
+        ax.text(0.5, 0.5, "Logo unavailable", ha="center", va="center")
+        return
     try:
-        p = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people?personIds={batter_id}&hydrate=currentTeam",
-            timeout=6,
-        ).json()["people"][0]
-        team_id = p["currentTeam"]["id"]
-        svg = requests.get(f"https://www.mlbstatic.com/team-logos/{team_id}.svg", timeout=6).content
-        png_bytes = cairosvg.svg2png(bytestring=svg, output_width=size, output_height=size)
-        img = Image.open(BytesIO(png_bytes))
+        png = _fetch_logo_png(tid, size)
+        img = Image.open(BytesIO(png))
         ax.imshow(img, interpolation="nearest", origin="upper", aspect="equal")
     except Exception:
-        ax.text(0.5, 0.5, "Logo unavailable", ha="center", va="center")
-    ax.axis("off")
+        ax.text(0.5, 0.5, f"Logo {tid} unavailable", ha="center", va="center")
 
 
 # -------------------- Velocity KDE panel --------------------
@@ -734,7 +746,7 @@ def pitching_dashboard(pitcher_id: int, df: pd.DataFrame) -> plt.Figure:
     # top row
     player_headshot(pitcher_id, ax=ax_headshot)
     player_bio(pitcher_id, df, ax=ax_bio)
-    plot_logo(pitcher_id, ax=ax_logo)
+    plot_logo(df, ax=ax_logo)
 
     # box score + tables/plots
     date_iso = str(df.loc[df["pitcher_id"] == pitcher_id, "game_date"].iloc[0])
