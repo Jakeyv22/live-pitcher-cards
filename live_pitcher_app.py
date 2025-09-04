@@ -118,11 +118,11 @@ def fetch_day_statcast(date_str: str) -> pd.DataFrame:
 def render_dashboard(pitcher_id: int, date_str: str):
     df_day = fetch_day_statcast(date_str)
     if df_day.empty:
-        st.image(_text_as_png_src("No games played on this date."), use_column_width=True)
+        st.image(_text_as_png_src("No games played on this date."), use_container_width=True)
         return
     df_p = df_day[df_day['pitcher_id'] == pitcher_id].reset_index(drop=True)
     if df_p.empty:
-        st.image(_text_as_png_src("This pitcher did not pitch on the selected date."), use_column_width=True)
+        st.image(_text_as_png_src("This pitcher did not pitch on the selected date."), use_container_width=True)
         return
 
     # build & render your Matplotlib dashboard
@@ -152,9 +152,8 @@ with st.sidebar:
         format_func=lambda d: d.strftime("%B %d, %Y"),  # e.g., September 03, 2025
     )
 
-    with st.status("Loading player directory…", expanded=False):
-        base_df = load_chadwick()
-        enriched = enrich_chadwick(base_df)
+    base_df = load_chadwick()
+    enriched = enrich_chadwick(base_df)
 
     # Pitchers only
     df_pitchers = enriched[enriched['position'].str.contains("Pitcher", na=False)].copy()
