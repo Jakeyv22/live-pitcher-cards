@@ -2,7 +2,7 @@
 
 Live, per-game pitcher cards built on Statcast data. See pitch distribution, movement, rolling velocity, and a live box score line — updated during games.
 
-**Demo:** ## ▶️ Live App
+## ▶️ Live App
 [Open the MLB Pitcher Cards app](https://live-pitcher-cards-kfj6cewgleddp2wlwmr74v.streamlit.app/)
 
 
