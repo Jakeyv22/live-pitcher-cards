@@ -130,7 +130,7 @@ def _text_as_png_src(text: str) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode('utf-8')
 
 from api_scraper import MLB_Scrape
-@st.cache_data(show_spinner=True, ttl=60)
+@st.cache_data(show_spinner=True)
 def fetch_statcast(date_str: str) -> pd.DataFrame:
     """Get pitch-level data for all games on a date -> pandas DataFrame."""
     sched = statsapi.schedule(start_date=date_str, end_date=date_str)
@@ -168,7 +168,7 @@ st.title("MLB Daily Pitching Dashboard")
 with st.sidebar:
     st.caption("Filters")
 
-    # Dates: Mar 18, 2025 -> today ; default to today
+    # Dates
     date_list = [d.date() for d in list_dates()]
     default_date_index = max(0, len(date_list) - 1)
     date = st.selectbox(
@@ -178,42 +178,84 @@ with st.sidebar:
         format_func=(lambda d: d.strftime("%B %d, %Y")) if date_list else str,
     )
 
+    # Pull once (cached) and build the set of MLB pitcher_ids for the date
+    df_day = fetch_statcast(date.strftime("%Y-%m-%d"))
+    pitched_ids_mlb: set[int] = set()
+    if not df_day.empty and "pitcher_id" in df_day.columns:
+        pitched_ids_mlb = set(
+            pd.to_numeric(df_day["pitcher_id"], errors="coerce")
+              .dropna()
+              .astype("int64")
+              .tolist()
+        )
+
     # Live pitchers (MLB + MiLB)
     df_pitchers = load_pitchers_all_levels()
     if df_pitchers.empty:
         st.error("Couldn’t load pitchers. Click Refresh.")
         st.stop()
 
-    # Level selector (defaults to MLB when present)
-    levels = [lvl for lvl in ["MLB","AAA","AA","A+","A","Rookie"] if lvl in df_pitchers["team_level"].unique()]
+    # Ensure numeric dtype for joins
+    df_pitchers["key_mlbam"] = pd.to_numeric(df_pitchers["key_mlbam"], errors="coerce").astype("Int64")
+
+    # Scope for the UI:
+    # - Include ONLY pitchers who pitched that MLB date,
+    #   across whichever current level/team they now belong to (MLB or MiLB).
+    # - Otherwise, show the full pool.
+    if pitched_ids_mlb:
+        df_scope = df_pitchers[df_pitchers["key_mlbam"].isin(pitched_ids_mlb)].copy()
+    else:
+        df_scope = df_pitchers.copy()
+
+    # If the filter yields nothing, inform and stop early
+    if df_scope.empty:
+        st.info(f"No pitchers in current rosters (any level) recorded an MLB pitch on {date.strftime('%b %d, %Y')}.")
+        st.stop()
+
+    # Level selector: built from the filtered scope so only levels with at least one qualifying pitcher appear
+    level_order_all = ["MLB", "AAA", "AA", "A+", "A", "Rookie"]
+    levels = [lvl for lvl in level_order_all if lvl in df_scope["team_level"].dropna().unique()]
+    if not levels:
+        st.info("No levels available for the current filter.")
+        st.stop()
+
     level_default_idx = levels.index("MLB") if "MLB" in levels else 0
     level = st.selectbox("Level", levels, index=level_default_idx)
 
-    teams = sorted(df_pitchers.loc[df_pitchers["team_level"] == level, "team"].unique().tolist())
+    # Teams limited to the selected level *within* the scope
+    teams = sorted(df_scope.loc[df_scope["team_level"] == level, "team"].dropna().unique().tolist())
     team = st.selectbox("Team", teams) if teams else None
     if not team:
-        st.info("No teams available for this level.")
+        st.info("No teams available for this level (with the current filter).")
         st.stop()
 
-    # Build pitcher options as (id, name) tuples; avoid None/attribute errors
+    # Pitchers limited to the selected team *within* the scope
     pframe = (
-        df_pitchers.loc[df_pitchers["team"] == team, ["key_mlbam", "full_name"]]
+        df_scope.loc[
+            (df_scope["team_level"] == level) & (df_scope["team"] == team),
+            ["key_mlbam", "full_name"],
+        ]
         .dropna(subset=["key_mlbam", "full_name"])
         .assign(key_mlbam=lambda d: d["key_mlbam"].astype("int64"))
         .sort_values("full_name")
     )
     pitcher_options = list(pframe.apply(lambda r: (int(r["key_mlbam"]), r["full_name"]), axis=1))
 
-    selected_pitcher = st.selectbox(
-        "Pitcher",
-        options=pitcher_options,
-        format_func=(lambda t: t[1]) if pitcher_options else None,
-    )
-    pitcher_id = selected_pitcher[0] if selected_pitcher else None
+    if not pitcher_options:
+        st.info(f"No pitchers for {team} match the current filter.")
+        pitcher_id = None
+    else:
+        selected_pitcher = st.selectbox(
+            "Pitcher",
+            options=pitcher_options,
+            format_func=(lambda t: t[1]),
+        )
+        pitcher_id = selected_pitcher[0] if selected_pitcher else None
 
     refresh = st.button("Refresh", type="primary")
     if refresh:
         fetch_statcast.clear()
+        load_pitchers_all_levels.clear()
         st.rerun()
 
 # Main panel
