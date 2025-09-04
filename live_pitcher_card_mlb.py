@@ -31,11 +31,61 @@ from matplotlib.patches import Ellipse
 from matplotlib.ticker import FuncFormatter
 import cairosvg
 import concurrent.futures
+from pathlib import Path
 
 # --- local imports ---
 from api_scraper import MLB_Scrape
 
 scraper = MLB_Scrape()
+
+from pathlib import Path
+import os
+import pandas as pd
+import numpy as np
+
+# Your local OneDrive folder (fallback for running on your PC)
+LEGACY_DATA_DIR = Path(r"C:\Users\jakev\OneDrive\Documents\FlashStats\Statcast")
+
+def resolve_data(filename: str, override: str | Path | None = None) -> Path:
+    """
+    Find a data file in common locations:
+    - explicit override path
+    - repo ./data/<filename> (works on Streamlit Cloud)
+    - current working dir ./data/<filename> (works in Streamlit run)
+    - same folder as this module
+    - your local OneDrive Statcast folder (legacy fallback)
+    - PITCH_CARDS_DATA_DIR env var (optional)
+    """
+    # 1) explicit override
+    if override:
+        p = Path(override)
+        if p.exists():
+            return p
+
+    # 2) env var directory (optional)
+    env_dir = os.getenv("PITCH_CARDS_DATA_DIR")
+    # build candidate list
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here / "data" / filename,
+        Path.cwd() / "data" / filename,
+        here / filename,
+        (Path(env_dir) / filename) if env_dir else None,
+        LEGACY_DATA_DIR / filename,
+    ]
+
+    for p in candidates:
+        if p and p.exists():
+            return p
+
+    raise FileNotFoundError(
+        f"Could not find {filename}. Looked in:\n" +
+        "\n".join(str(c) for c in candidates if c)
+    )
+
+# replaces the hard-coded C:\ path
+STATCAST_CSV = resolve_data("statcast_2025_grouped.csv")
+df_statcast_group = pd.read_csv(STATCAST_CSV)
 
 # -------------------- Styling --------------------
 font_properties = {"family": "DejaVu Sans", "size": 12}
@@ -166,20 +216,18 @@ def _load_arm_angle_lookup(path: str) -> dict:
 
 def df_processing(
     df_pyb: pd.DataFrame,
-    lookup_csv: str = r"C:/Users/jakev/OneDrive/Documents/FlashStats/Statcast/mlb_arm_angle.csv",
+    lookup_csv: str | None = None,   # optional override
 ) -> pd.DataFrame:
     df = df_pyb.copy()
-
-    # normalize column names we use
     df = df.rename(columns={"start_speed": "release_speed", "extension": "release_extension"})
     df["is_hardhit"] = df.get("launch_speed", np.nan) > 95
     df = add_woba(df)
 
-    # map existing arm angles
-    arm_angle_lookup = _load_arm_angle_lookup(lookup_csv)
+    # find the CSV (repo data first, then your OneDrive fallback)
+    csv_path = resolve_data("mlb_arm_angle.csv", override=lookup_csv)
+    arm_angle_lookup = pd.read_csv(csv_path).set_index("pitcher_id")["mean_arm_angle"].astype(float).to_dict()
     df["arm_angle"] = df["pitcher_id"].map(arm_angle_lookup)
 
-    # estimate missing angles
     missing_ids = df.loc[df["arm_angle"].isna(), "pitcher_id"].dropna().unique().tolist()
     if missing_ids:
         heights = _get_pitcher_heights_parallel([int(i) for i in missing_ids])
@@ -187,11 +235,10 @@ def df_processing(
         df["shoulder_height_ft"] = df["height_inches"] * 0.70 / 12.0
         est_angles = (
             df.loc[df["arm_angle"].isna()]
-            .groupby("pitcher_id")
-            .apply(lambda g: g.apply(_calculate_arm_angle, axis=1).mean())
+              .groupby("pitcher_id")
+              .apply(lambda g: g.apply(_calculate_arm_angle, axis=1).mean())
         )
         df["arm_angle"] = df["arm_angle"].combine_first(df["pitcher_id"].map(est_angles))
-
     return df
 
 
@@ -692,11 +739,6 @@ def pitching_dashboard(pitcher_id: int, df: pd.DataFrame) -> plt.Figure:
     # box score + tables/plots
     date_iso = str(df.loc[df["pitcher_id"] == pitcher_id, "game_date"].iloc[0])
     plot_boxscore_pitcher_line(pitcher_id=pitcher_id, df=df, date=date_iso, ax=ax_season_table, fontsize=20)
-
-    # league averages file (kept here to match your previous behavior)
-    df_statcast_group = pd.read_csv(
-        r"C:/Users/jakev/OneDrive/Documents/FlashStats/Statcast/statcast_2025_grouped.csv"
-    )
 
     pitch_table(df, ax=ax_table, df_statcast_group=df_statcast_group, fontsize=15)
     velocity_kdes(df=df, ax=ax_plot_1, gs=gs, gs_x=[3, 4], gs_y=[1, 3], fig=fig, df_statcast_group=df_statcast_group)
