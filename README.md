@@ -8,7 +8,7 @@ Live, per-game pitcher cards built on Statcast data. See pitch distribution, mov
 
 ## Features
 - Live per-pitch data for the selected date & pitcher
-- Pitch velocity KDEs, movement plot, rolling velo
+- Pitch velocity KDEs, pitch shapes, rolling velo
 - Box score line, pitch table with league-average coloring
 - Manual **Refresh** button + short cache TTL for in-game updates
 
