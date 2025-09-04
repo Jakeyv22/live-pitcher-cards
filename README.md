@@ -1,6 +1,6 @@
 # MLB Daily Pitching Dashboard (Streamlit)
 
-Live, per-game pitcher cards built on Statcast data. See pitch distribution, movement, rolling velocity, and a live box score line — updated during games.
+Live, per-game pitcher cards built on Statcast data. See pitch distribution, pitch shapes, rolling velocity, and a live box score line — updated during games.
 
 ## ▶️ Live App
 [Open the MLB Pitcher Cards app](https://live-pitcher-cards-kfj6cewgleddp2wlwmr74v.streamlit.app/)
