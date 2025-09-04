@@ -161,25 +161,38 @@ def render_dashboard(pitcher_id: int, date_str: str):
     fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
     st.download_button("Download PNG", buf.getvalue(), "pitching_dashboard.png", "image/png")
 
+def _hard_refresh_sources():
+    # Refresh the live per-day Statcast feed so new pitchers appear
+    fetch_statcast.clear()
+    # Optional: refresh rosters too (uncomment if you want to re-pull them on generate)
+    # load_pitchers_all_levels.clear()
+
+
 # -------------------- UI --------------------
 
 st.title("MLB Daily Pitching Dashboard")
 
-with st.sidebar:
-    st.caption("Filters")
+# init once so chart stays until you click Generate again
+if "generated" not in st.session_state:
+    st.session_state.generated = False
+if "last_params" not in st.session_state:
+    st.session_state.last_params = None
 
-    # Dates
-    date_list = [d.date() for d in list_dates()]
-    default_date_index = max(0, len(date_list) - 1)
-    date = st.selectbox(
+with st.sidebar:
+    st.header("Filters")
+
+    # Date picker with calendar popover
+    today = pd.Timestamp.today().normalize().date()
+    date = st.date_input(
         "Date",
-        date_list if date_list else [],
-        index=default_date_index if date_list else 0,
-        format_func=(lambda d: d.strftime("%B %d, %Y")) if date_list else str,
+        value=today,          # default = today
+        max_value=today,      # no future dates
+        format="MM/DD/YYYY",
+        help="Click to open calendar.",
     )
 
-    # Pull once (cached) and build the set of MLB pitcher_ids for the date
-    df_day = fetch_statcast(date.strftime("%Y-%m-%d"))
+    # Pull once (cached) & build the set of MLB pitcher_ids that pitched on this date
+    df_day = fetch_statcast(date.isoformat())
     pitched_ids_mlb: set[int] = set()
     if not df_day.empty and "pitcher_id" in df_day.columns:
         pitched_ids_mlb = set(
@@ -189,77 +202,99 @@ with st.sidebar:
               .tolist()
         )
 
-    # Live pitchers (MLB + MiLB)
+    # Current rosters (MLB + MiLB)
     df_pitchers = load_pitchers_all_levels()
     if df_pitchers.empty:
         st.error("Couldn’t load pitchers. Click Refresh.")
         st.stop()
 
-    # Ensure numeric dtype for joins
     df_pitchers["key_mlbam"] = pd.to_numeric(df_pitchers["key_mlbam"], errors="coerce").astype("Int64")
 
-    # Scope for the UI:
-    # - Include ONLY pitchers who pitched that MLB date,
-    #   across whichever current level/team they now belong to (MLB or MiLB).
-    # - Otherwise, show the full pool.
+    # Restrict to pitchers who pitched on the selected MLB date
     if pitched_ids_mlb:
         df_scope = df_pitchers[df_pitchers["key_mlbam"].isin(pitched_ids_mlb)].copy()
     else:
-        df_scope = df_pitchers.copy()
+        df_scope = pd.DataFrame(columns=df_pitchers.columns)
 
-    # If the filter yields nothing, inform and stop early
     if df_scope.empty:
-        st.info(f"No pitchers in current rosters (any level) recorded an MLB pitch on {date.strftime('%b %d, %Y')}.")
-        st.stop()
-
-    # Level selector: built from the filtered scope so only levels with at least one qualifying pitcher appear
-    level_order_all = ["MLB", "AAA", "AA", "A+", "A", "Rookie"]
-    levels = [lvl for lvl in level_order_all if lvl in df_scope["team_level"].dropna().unique()]
-    if not levels:
-        st.info("No levels available for the current filter.")
-        st.stop()
-
-    level_default_idx = levels.index("MLB") if "MLB" in levels else 0
-    level = st.selectbox("Level", levels, index=level_default_idx)
-
-    # Teams limited to the selected level *within* the scope
-    teams = sorted(df_scope.loc[df_scope["team_level"] == level, "team"].dropna().unique().tolist())
-    team = st.selectbox("Team", teams) if teams else None
-    if not team:
-        st.info("No teams available for this level (with the current filter).")
-        st.stop()
-
-    # Pitchers limited to the selected team *within* the scope
-    pframe = (
-        df_scope.loc[
-            (df_scope["team_level"] == level) & (df_scope["team"] == team),
-            ["key_mlbam", "full_name"],
-        ]
-        .dropna(subset=["key_mlbam", "full_name"])
-        .assign(key_mlbam=lambda d: d["key_mlbam"].astype("int64"))
-        .sort_values("full_name")
-    )
-    pitcher_options = list(pframe.apply(lambda r: (int(r["key_mlbam"]), r["full_name"]), axis=1))
-
-    if not pitcher_options:
-        st.info(f"No pitchers for {team} match the current filter.")
+        st.info(f"No recorded MLB pitches on {date.strftime('%b %d, %Y')}.")
         pitcher_id = None
+        level = None
+        team = None
     else:
-        selected_pitcher = st.selectbox(
-            "Pitcher",
-            options=pitcher_options,
-            format_func=(lambda t: t[1]),
-        )
-        pitcher_id = selected_pitcher[0] if selected_pitcher else None
+        # Level selector from scope
+        level_order_all = ["MLB", "AAA", "AA", "A+", "A", "Rookie"]
+        levels = [lvl for lvl in level_order_all if lvl in df_scope["team_level"].dropna().unique()]
+        level_default_idx = levels.index("MLB") if "MLB" in levels else 0
+        level = st.selectbox("Level", levels, index=level_default_idx)
 
-    refresh = st.button("Refresh", type="primary")
-    if refresh:
-        fetch_statcast.clear()
-        load_pitchers_all_levels.clear()
-        st.rerun()
+        # Teams limited to selected level
+        teams = sorted(df_scope.loc[df_scope["team_level"] == level, "team"].dropna().unique().tolist())
+        team = st.selectbox("Team", teams) if teams else None
 
-# Main panel
-if pitcher_id is not None:
-    render_dashboard(pitcher_id, date.strftime("%Y-%m-%d"))
+        # Pitchers limited to selected team
+        if team:
+            pframe = (
+                df_scope.loc[
+                    (df_scope["team_level"] == level) & (df_scope["team"] == team),
+                    ["key_mlbam", "full_name"],
+                ]
+                .dropna(subset=["key_mlbam", "full_name"])
+                .assign(key_mlbam=lambda d: d["key_mlbam"].astype("int64"))
+                .sort_values("full_name")
+            )
+            pitcher_options = list(pframe.apply(lambda r: (int(r["key_mlbam"]), r["full_name"]), axis=1))
+        else:
+            pitcher_options = []
+
+        if not pitcher_options:
+            st.info(f"No pitchers for {team} match the current filter.")
+            pitcher_id = None
+        else:
+            selected_pitcher = st.selectbox(
+                "Pitcher",
+                options=pitcher_options,
+                format_func=(lambda t: t[1]),
+            )
+            pitcher_id = selected_pitcher[0] if selected_pitcher else None
+
+    # Actions
+    generate = st.button("Generate", type="primary")
+
+    if generate:
+        if pitcher_id is None:
+            st.session_state._sidebar_error = "Choose a pitcher who pitched on this date."
+        else:
+            # Hard refresh so brand-new pitchers on this date are discoverable
+            _hard_refresh_sources()
+            # Persist params for the render pass
+            st.session_state.generated = True
+            st.session_state.last_params = {
+                "pitcher_id": int(pitcher_id),
+                "date_str": date.strftime("%Y-%m-%d"),
+            }
+            # Tell the main panel to show the spinner this run
+            st.session_state._trigger_generate = True
+            st.rerun()
+
+    # Optional: show selection warning (in sidebar) without rendering
+    if "_sidebar_error" in st.session_state:
+        st.warning(st.session_state.pop("_sidebar_error"))
+
+# -------------------- Main panel --------------------
+
+params = st.session_state.get("last_params")
+
+if st.session_state.get("_trigger_generate", False) and params:
+    # Show spinner ONLY on the click-triggered run
+    st.session_state._trigger_generate = False
+    with st.spinner("Building pitcher dashboard..."):
+        render_dashboard(params["pitcher_id"], params["date_str"])
+
+elif st.session_state.get("generated") and params:
+    # Persist the last dashboard without spinner on subsequent interactions
+    render_dashboard(params["pitcher_id"], params["date_str"])
+
 else:
-    st.info("Choose a pitcher.")
+    st.info("Pick a date → level → team → pitcher, then click **Generate Dashboard**.")
+
