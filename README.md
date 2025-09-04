@@ -11,3 +11,9 @@ Live, per-game pitcher cards built on Statcast data. See pitch distribution, mov
 - Pitch velocity KDEs, movement plot, rolling velo
 - Box score line, pitch table with league-average coloring
 - Manual **Refresh** button + short cache TTL for in-game updates
+
+## Run locally
+```bash
+# Python 3.10+ recommended
+pip install -r requirements.txt
+streamlit run live_pitcher_app.py   # or app.py if you renamed it
