@@ -1,0 +1,17 @@
+streamlit>=1.36
+pandas
+numpy
+matplotlib
+seaborn
+pybaseball
+statsapi
+requests
+polars
+pillow
+tqdm
+pytz
+cairosvg
+cairocffi
+lxml
+tinycss2
+cssselect2
