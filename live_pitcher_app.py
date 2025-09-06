@@ -10,9 +10,7 @@ from live_pitcher_card_mlb import pitching_dashboard   # must return a Matplotli
 
 st.set_page_config(page_title="MLB Daily Pitching Dashboard", layout="wide")
 
-from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=1*60*60*1000, key="roster_auto_refresh")  # Refresh rosters every hour
-
+st.autorefresh(interval=1*60*60*1000, key="roster_auto_refresh")  # Refresh rosters every hour
 
 # -------------------- Data helpers --------------------
 
