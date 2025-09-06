@@ -10,6 +10,10 @@ from live_pitcher_card_mlb import pitching_dashboard   # must return a Matplotli
 
 st.set_page_config(page_title="MLB Daily Pitching Dashboard", layout="wide")
 
+from streamlit_autorefresh import st_autorefresh
+st_autorefresh(interval=1*60*60*1000, key="roster_auto_refresh")  # Refresh rosters every hour
+
+
 # -------------------- Data helpers --------------------
 
 # Sport IDs we want to include and their display levels
@@ -27,7 +31,7 @@ ROSTER_URL = "https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=
 
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(show_spinner=True)  # keep your caching; you can add ttl=600 later if you want
+@st.cache_data(show_spinner=True)
 def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
     """
     Fast loader for MLB + MiLB (AAA, AA, A+, A, Rookie) active rosters.
@@ -112,10 +116,11 @@ def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
     return df.sort_values(["team_level","team","full_name"]).reset_index(drop=True)
 
 
+
 @st.cache_data(show_spinner=False)
 def list_dates():
     start = pd.Timestamp(2025, 3, 18)
-    today = pd.Timestamp.today().normalize()
+    today = pd.Timestamp.now(tz="America/Los_Angeles").normalize()
     end = max(start, today)
     return pd.date_range(start=start, end=end)
 
@@ -182,7 +187,7 @@ with st.sidebar:
     st.header("Filters")
 
     # Date picker with calendar popover
-    today = pd.Timestamp.today().normalize().date()
+    today = pd.Timestamp.now(tz="America/Los_Angeles").normalize().date()
     date = st.date_input(
         "Date",
         value=today,          # default = today
@@ -204,9 +209,6 @@ with st.sidebar:
 
     # Current rosters (MLB + MiLB)
     df_pitchers = load_pitchers_all_levels()
-    if df_pitchers.empty:
-        st.error("Couldn’t load pitchers. Click Refresh.")
-        st.stop()
 
     df_pitchers["key_mlbam"] = pd.to_numeric(df_pitchers["key_mlbam"], errors="coerce").astype("Int64")
 
@@ -315,6 +317,6 @@ elif st.session_state.get("generated") and params and not selection_changed:
     render_dashboard(params["pitcher_id"], params["date_str"])
 
 else:
-    st.info("Pick a date → level → team → pitcher, then click **Generate Dashboard**.")
+    st.info("Pick a date → level → team → pitcher, then click **Generate**.")
 
 
