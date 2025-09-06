@@ -10,9 +10,6 @@ from live_pitcher_card_mlb import pitching_dashboard   # must return a Matplotli
 
 st.set_page_config(page_title="MLB Daily Pitching Dashboard", layout="wide")
 
-from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=1*60*60*1000, key="roster_auto_refresh")  # Refresh rosters every hour
-
 # -------------------- Data helpers --------------------
 
 # Sport IDs we want to include and their display levels
@@ -30,7 +27,7 @@ ROSTER_URL = "https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=
 
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=True, ttl=60*60) # 1 hour refresh of active rosters
 def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
     """
     Fast loader for MLB + MiLB (AAA, AA, A+, A, Rookie) active rosters.
@@ -134,7 +131,7 @@ def _text_as_png_src(text: str) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode('utf-8')
 
 from api_scraper import MLB_Scrape
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=True, ttl=30) # 30 seconds. Keeps live pitchers fresh to choose from
 def fetch_statcast(date_str: str) -> pd.DataFrame:
     """Get pitch-level data for all games on a date -> pandas DataFrame."""
     sched = statsapi.schedule(start_date=date_str, end_date=date_str)
@@ -218,7 +215,8 @@ with st.sidebar:
         df_scope = pd.DataFrame(columns=df_pitchers.columns)
 
     if df_scope.empty:
-        st.info(f"No recorded MLB pitches on {date.strftime('%b %d, %Y')}.")
+        st.info(f"No recorded MLB pitches on {date.strftime('%b %d, %Y')}. "
+        "If games are underway, click **Generate** to refresh live pitchers.")
         pitcher_id = None
         level = None
         team = None
@@ -268,24 +266,31 @@ with st.sidebar:
     generate = st.button("Generate", type="primary")
 
     if generate:
+        # 1) Always refresh the selected date’s pitch feed (DON’T touch rosters)
+        fetch_statcast.clear()
+
+        date_str = date.strftime("%Y-%m-%d")
+
         if pitcher_id is None:
-            st.session_state._sidebar_error = "Choose a pitcher who pitched on this date."
+            # Use Generate as a "refresh filters" action when nothing is selected
+            st.session_state._sidebar_info = (
+                f"Live pitch data refreshed for {date.strftime('%b %d, %Y')}. "
+                "Select a pitcher to build the dashboard."
+            )
+            st.rerun()
         else:
-            # Hard refresh so brand-new pitchers on this date are discoverable
-            _hard_refresh_sources()
-            # Persist params for the render pass
+            # Normal generation path with the same pitcher/date
             st.session_state.generated = True
             st.session_state.last_params = {
                 "pitcher_id": int(pitcher_id),
-                "date_str": date.strftime("%Y-%m-%d"),
+                "date_str": date_str,
             }
-            # Tell the main panel to show the spinner this run
             st.session_state._trigger_generate = True
             st.rerun()
 
-    # Optional: show selection warning (in sidebar) without rendering
-    if "_sidebar_error" in st.session_state:
-        st.warning(st.session_state.pop("_sidebar_error"))
+    # Optional: show the info message in the sidebar
+    if "_sidebar_info" in st.session_state:
+        st.info(st.session_state.pop("_sidebar_info"))
 
 # -------------------- Main panel --------------------
 params = st.session_state.get("last_params")
