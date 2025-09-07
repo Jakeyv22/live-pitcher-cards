@@ -27,7 +27,7 @@ ROSTER_URL = "https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=
 
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(show_spinner=True, ttl=60*60) # 1 hour refresh of active rosters
+@st.cache_data(show_spinner=True, ttl=3*60*60) # 3 hour refresh of active rosters
 def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
     """
     Fast loader for MLB + MiLB (AAA, AA, A+, A, Rookie) active rosters.
