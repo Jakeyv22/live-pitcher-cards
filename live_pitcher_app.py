@@ -273,10 +273,6 @@ with st.sidebar:
 
         if pitcher_id is None:
             # Use Generate as a "refresh filters" action when nothing is selected
-            st.session_state._sidebar_info = (
-                f"Live pitch data refreshed for {date.strftime('%b %d, %Y')}. "
-                "Select a pitcher to build the dashboard."
-            )
             st.rerun()
         else:
             # Normal generation path with the same pitcher/date
