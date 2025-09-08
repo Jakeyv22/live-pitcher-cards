@@ -77,20 +77,18 @@ def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
 
         out = []
         for row in roster:
-            pos = ((row.get("position") or {}).get("abbreviation"))
-            if pos != "P":
-                continue
             person = row.get("person") or {}
             pid = person.get("id")
             pname = person.get("fullName")
             if not pid or not pname:
                 continue
+            pos = (row.get("position") or {}).get("abbreviation")
             out.append({
                 "key_mlbam": int(pid),
                 "full_name": pname,
                 "team": team["name"],
                 "team_id": int(team["id"]),
-                "position": "Pitcher",
+                "position": pos,
                 "team_level": team["level"],
             })
         return out
@@ -110,7 +108,6 @@ def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
     level_order = pd.CategoricalDtype(categories=["MLB","AAA","AA","A+","A","Rookie"], ordered=True)
     df["team_level"] = df["team_level"].astype(level_order)
     return df.sort_values(["team_level","team","full_name"]).reset_index(drop=True)
-
 
 
 @st.cache_data(show_spinner=False)
@@ -161,13 +158,6 @@ def render_dashboard(pitcher_id: int, date_str: str):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
     st.download_button("Download PNG", buf.getvalue(), "pitching_dashboard.png", "image/png")
-
-def _hard_refresh_sources():
-    # Refresh the live per-day Statcast feed so new pitchers appear
-    fetch_statcast.clear()
-    # Optional: refresh rosters too (uncomment if you want to re-pull them on generate)
-    # load_pitchers_all_levels.clear()
-
 
 # -------------------- UI --------------------
 
@@ -224,12 +214,22 @@ with st.sidebar:
         # Level selector from scope
         level_order_all = ["MLB", "AAA", "AA", "A+", "A", "Rookie"]
         levels = [lvl for lvl in level_order_all if lvl in df_scope["team_level"].dropna().unique()]
-        level_default_idx = levels.index("MLB") if "MLB" in levels else 0
-        level = st.selectbox("Level", levels, index=level_default_idx)
+        # Seed a default once; after that Streamlit will preserve sel_level if it stays in options
+        if "sel_level" not in st.session_state:
+            st.session_state.sel_level = "MLB" if "MLB" in levels else (levels[0] if levels else None)
+
+        level = st.selectbox("Level", options=levels, key="sel_level")
 
         # Teams limited to selected level
         teams = sorted(df_scope.loc[df_scope["team_level"] == level, "team"].dropna().unique().tolist())
-        team = st.selectbox("Team", teams) if teams else None
+
+        # Seed team default once; after that Streamlit will keep sel_team if still present
+        if "sel_team" not in st.session_state and teams:
+            st.session_state.sel_team = teams[0]
+
+        # If the previously selected team is no longer in options (rare for your case),
+        # Streamlit will fall back to index=0 automatically.
+        team = st.selectbox("Team", options=teams, key="sel_team") if teams else None
 
         # Pitchers limited to selected team
         if team:
@@ -246,16 +246,18 @@ with st.sidebar:
         else:
             pitcher_options = []
 
-        if not pitcher_options:
-            st.info(f"No pitchers for {team} match the current filter.")
-            pitcher_id = None
-        else:
-            selected_pitcher = st.selectbox(
-                "Pitcher",
-                options=pitcher_options,
-                format_func=(lambda t: t[1]),
-            )
-            pitcher_id = selected_pitcher[0] if selected_pitcher else None
+        # Seed pitcher default once
+        if "sel_pitcher" not in st.session_state and pitcher_options:
+            st.session_state.sel_pitcher = pitcher_options[0]
+
+        selected_pitcher = st.selectbox(
+            "Pitcher",
+            options=pitcher_options,
+            format_func=lambda t: t[1],
+            key="sel_pitcher",
+        ) if pitcher_options else None
+
+        pitcher_id = selected_pitcher[0] if selected_pitcher else None
 
     st.session_state["_current_selection"] = {
         "pitcher_id": int(pitcher_id) if pitcher_id is not None else None,
@@ -283,10 +285,6 @@ with st.sidebar:
             }
             st.session_state._trigger_generate = True
             st.rerun()
-
-    # Optional: show the info message in the sidebar
-    if "_sidebar_info" in st.session_state:
-        st.info(st.session_state.pop("_sidebar_info"))
 
 # -------------------- Main panel --------------------
 params = st.session_state.get("last_params")
