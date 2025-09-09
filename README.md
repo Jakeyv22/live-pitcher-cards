@@ -6,7 +6,7 @@ Live, per-game pitcher cards built on Statcast data. See pitch distribution, pit
 [Open the App!](https://mlb-live-pitcher-cards.streamlit.app/)
 
 
-![Screenshot](assets/paul_skenes_082925.png)
+![Screenshot](assets/paul_skenes_090425.png)
 
 ## Features
 - Live per-pitch data for the selected date & pitcher
