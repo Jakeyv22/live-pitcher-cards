@@ -193,6 +193,11 @@ with st.sidebar:
             )
             pitcher_id = selected_pitcher[0] if selected_pitcher else None
 
+    st.session_state["_current_selection"] = {
+    "pitcher_id": int(pitcher_id) if pitcher_id is not None else None,
+    "date_str": date.strftime("%Y-%m-%d"),
+}
+
     # Actions
     generate = st.button("Generate", type="primary")
 
