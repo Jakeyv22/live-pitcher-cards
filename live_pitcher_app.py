@@ -14,7 +14,7 @@ st.set_page_config(page_title="MLB Daily Pitching Dashboard", layout="wide")
 
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(show_spinner=True, ttl=3*60*60)
+@st.cache_data(show_spinner=True, ttl=30)
 def load_pitchers_from_date(date_str: str) -> pd.DataFrame:
     """
     From the pitch-level DF for `date_str`, return one row per pitcher with
@@ -136,7 +136,6 @@ with st.sidebar:
 
     # Pull once (cached) & build the set of MLB pitcher_ids that pitched on this date
     df_day = fetch_statcast(date.isoformat())
-    pitched_ids_mlb: set[int] = set()
     if not df_day.empty and "pitcher_id" in df_day.columns:
         pitched_ids_mlb = set(
             pd.to_numeric(df_day["pitcher_id"], errors="coerce")
@@ -198,8 +197,9 @@ with st.sidebar:
     generate = st.button("Generate", type="primary")
 
     if generate:
-        # 1) Always refresh the selected date’s pitch feed (DON’T touch rosters)
+        # Always refresh the selected date’s pitch feed AND the derived pitchers list
         fetch_statcast.clear()
+        load_pitchers_from_date.clear() 
 
         date_str = date.strftime("%Y-%m-%d")
 
