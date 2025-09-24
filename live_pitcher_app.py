@@ -245,6 +245,6 @@ elif st.session_state.get("generated") and params and not selection_changed:
     render_dashboard(params["pitcher_id"], params["date_str"])
 
 else:
-    st.info("Pick a date → level → team → pitcher, then click **Generate**.")
+    st.info("Pick a date → team → pitcher, then click **Generate**.")
 
 
