@@ -12,110 +12,61 @@ st.set_page_config(page_title="MLB Daily Pitching Dashboard", layout="wide")
 
 # -------------------- Data helpers --------------------
 
-# Sport IDs we want to include and their display levels
-SPORT_LEVELS = {
-    1:  "MLB",
-    11: "AAA",
-    12: "AA",
-    13: "A+",
-    14: "A",
-    16: "Rookie",
-}
-
-TEAMS_URL = "https://statsapi.mlb.com/api/v1/teams?sportId={sport_id}&activeStatus=Y"
-ROSTER_URL = "https://statsapi.mlb.com/api/v1/teams/{team_id}/roster?rosterType=active"
-
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(show_spinner=True, ttl=3*60*60) # 3 hour refresh of active rosters
-def load_pitchers_all_levels(max_workers: int = 24) -> pd.DataFrame:
+@st.cache_data(show_spinner=True, ttl=3*60*60)
+def load_pitchers_from_date(date_str: str) -> pd.DataFrame:
     """
-    Fast loader for MLB + MiLB (AAA, AA, A+, A, Rookie) active rosters.
-    Returns columns: key_mlbam, full_name, team, team_id, position, team_level
+    From the pitch-level DF for `date_str`, return one row per pitcher with
+    columns: pitcher_id, pitcher_name, pitcher_team_id, team_name.
     """
-    # 1) Reuse a single session (connection pooling)
-    session = requests.Session()
-    session.headers.update({
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate",
-        "User-Agent": "FlashStats/1.0",
-    })
+    df_day = fetch_statcast(date_str)
+    cols = ["pitcher_id", "pitcher_name", "pitcher_team_id", "team_name"]
+    if df_day.empty:
+        return pd.DataFrame(columns=cols)
 
-    # 2) Get all teams for all sports (sequential, only ~5 calls)
-    team_meta = []
-    for sport_id, level_label in SPORT_LEVELS.items():
-        url = TEAMS_URL.format(sport_id=sport_id)  # already includes activeStatus=Y
-        try:
-            # Ask only for what we need to trim payload/parse time
-            r = session.get(url, params={"fields": "teams,id,name"}, timeout=10)
-            teams = (r.json() or {}).get("teams", []) or []
-        except Exception:
-            teams = []
+    # Ensure required columns exist
+    required = {"pitcher_id", "pitcher_name", "pitcher_team_id"}
+    missing = required - set(df_day.columns)
+    if missing:
+        # graceful fallback: create empties for missing fields
+        for c in missing:
+            df_day[c] = pd.NA
 
-        for t in teams:
-            tid = t.get("id")
-            tname = t.get("name")
-            if not tid or not tname:
-                continue
-            team_meta.append({"id": int(tid), "name": tname, "level": level_label})
+    # Unique (pitcher_id, pitcher_name, pitcher_team_id)
+    base = (
+        df_day.loc[:, ["pitcher_id", "pitcher_name", "pitcher_team_id"]]
+        .dropna(subset=["pitcher_id", "pitcher_team_id"])
+        .assign(
+            pitcher_id=lambda d: pd.to_numeric(d["pitcher_id"], errors="coerce"),
+            pitcher_team_id=lambda d: pd.to_numeric(d["pitcher_team_id"], errors="coerce"),
+        )
+        .dropna(subset=["pitcher_id", "pitcher_team_id"])
+        .astype({"pitcher_id": "int64", "pitcher_team_id": "int64"})
+        .drop_duplicates(subset=["pitcher_id", "pitcher_team_id"])
+        .reset_index(drop=True)
+    )
 
-    if not team_meta:
-        return pd.DataFrame(columns=["key_mlbam","full_name","team","team_id","position","team_level"])
+    if base.empty:
+        return pd.DataFrame(columns=cols)
 
-    # 3) Fetch all rosters in parallel (I/O bound -> threads are perfect)
-    def _fetch_team_roster(team: dict) -> list[dict]:
-        url = ROSTER_URL.format(team_id=team["id"])  # already includes rosterType=active
-        try:
-            r = session.get(
-                url,
-                params={"fields": "roster,person,id,fullName,position,abbreviation"},
-                timeout=10,
-            )
-            roster = (r.json() or {}).get("roster", []) or []
-        except Exception:
-            roster = []
+    # Map team_id -> team_name from schedule of that date
+    sched = statsapi.schedule(start_date=date_str, end_date=date_str)
+    team_name_by_id: dict[int, str] = {}
+    for g in sched:
+        for tid_key, tname_key in [("home_id", "home_name"), ("away_id", "away_name")]:
+            tid = g.get(tid_key)
+            tname = g.get(tname_key)
+            if tid and tname:
+                team_name_by_id[int(tid)] = tname
 
-        out = []
-        for row in roster:
-            person = row.get("person") or {}
-            pid = person.get("id")
-            pname = person.get("fullName")
-            if not pid or not pname:
-                continue
-            pos = (row.get("position") or {}).get("abbreviation")
-            out.append({
-                "key_mlbam": int(pid),
-                "full_name": pname,
-                "team": team["name"],
-                "team_id": int(team["id"]),
-                "position": pos,
-                "team_level": team["level"],
-            })
-        return out
-
-    rows: list[dict] = []
-    max_workers = max(8, min(max_workers, 32))  # sensible bounds
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for team_rows in ex.map(_fetch_team_roster, team_meta):
-            if team_rows:
-                rows.extend(team_rows)
-
-    if not rows:
-        return pd.DataFrame(columns=["key_mlbam","full_name","team","team_id","position","team_level"])
-
-    # 4) Build the DataFrame exactly like before
-    df = pd.DataFrame(rows).drop_duplicates(subset=["key_mlbam", "team_level"])
-    level_order = pd.CategoricalDtype(categories=["MLB","AAA","AA","A+","A","Rookie"], ordered=True)
-    df["team_level"] = df["team_level"].astype(level_order)
-    return df.sort_values(["team_level","team","full_name"]).reset_index(drop=True)
-
-
-@st.cache_data(show_spinner=False)
-def list_dates():
-    start = pd.Timestamp(2025, 3, 18)
-    today = pd.Timestamp.now(tz="America/Los_Angeles").normalize()
-    end = max(start, today)
-    return pd.date_range(start=start, end=end)
+    out = (
+        base.assign(team_name=lambda d: d["pitcher_team_id"].map(team_name_by_id).fillna("Unknown Team"))
+            .loc[:, ["pitcher_id", "pitcher_name", "pitcher_team_id", "team_name"]]
+            .sort_values(["team_name", "pitcher_name"])
+            .reset_index(drop=True)
+    )
+    return out
 
 def _text_as_png_src(text: str) -> str:
     fig, ax = plt.subplots(figsize=(8, 2))
@@ -177,6 +128,7 @@ with st.sidebar:
     date = st.date_input(
         "Date",
         value=today,          # default = today
+        min_value=datetime.date(2017, 4, 2),  # MLB season start
         max_value=today,      # no future dates
         format="MM/DD/YYYY",
         help="Click to open calendar.",
@@ -193,64 +145,54 @@ with st.sidebar:
               .tolist()
         )
 
-    # Current rosters (MLB + MiLB)
-    df_pitchers = load_pitchers_all_levels()
-
-    df_pitchers["key_mlbam"] = pd.to_numeric(df_pitchers["key_mlbam"], errors="coerce").astype("Int64")
-
-    # Restrict to pitchers who pitched on the selected MLB date
-    if pitched_ids_mlb:
-        df_scope = df_pitchers[df_pitchers["key_mlbam"].isin(pitched_ids_mlb)].copy()
-    else:
-        df_scope = pd.DataFrame(columns=df_pitchers.columns)
+    # --- Build choices strictly from the selected date’s pitch DF (with names) ---
+    df_scope = load_pitchers_from_date(date.strftime("%Y-%m-%d"))
 
     if df_scope.empty:
         st.info(f"No recorded MLB pitches on {date.strftime('%b %d, %Y')}. "
-        "If games are underway, click **Generate** to refresh live pitchers.")
+                "If games are underway, click **Generate** to refresh live pitchers.")
         pitcher_id = None
-        level = None
+        team_id = None
         team = None
     else:
-        # Level selector from scope
-        level_order_all = ["MLB", "AAA", "AA", "A+", "A", "Rookie"]
-        levels = [lvl for lvl in level_order_all if lvl in df_scope["team_level"].dropna().unique()]
-        level_default_idx = levels.index("MLB") if "MLB" in levels else 0
-        level = st.selectbox("Level", levels, index=level_default_idx)
+        # Teams that appear on that date
+        team_rows = (
+            df_scope.loc[:, ["pitcher_team_id", "team_name"]]
+            .drop_duplicates()
+            .sort_values("team_name")
+            .itertuples(index=False, name=None)   # -> [(team_id, team_name), ...]
+        )
+        team_options = list(team_rows)
 
-        # Teams limited to selected level
-        teams = sorted(df_scope.loc[df_scope["team_level"] == level, "team"].dropna().unique().tolist())
-        team = st.selectbox("Team", teams) if teams else None
+        selected_team = st.selectbox(
+            "Team",
+            options=team_options,
+            format_func=lambda t: t[1] if t else "",
+        )
+        team_id = selected_team[0] if selected_team else None
+        team = selected_team[1] if selected_team else None
 
-        # Pitchers limited to selected team
-        if team:
+        # Pitchers for that team (show names)
+        if team_id is not None:
             pframe = (
-                df_scope.loc[
-                    (df_scope["team_level"] == level) & (df_scope["team"] == team),
-                    ["key_mlbam", "full_name"],
-                ]
-                .dropna(subset=["key_mlbam", "full_name"])
-                .assign(key_mlbam=lambda d: d["key_mlbam"].astype("int64"))
-                .sort_values("full_name")
+                df_scope.loc[df_scope["pitcher_team_id"] == team_id, ["pitcher_id", "pitcher_name"]]
+                .drop_duplicates()
+                .sort_values("pitcher_name")
             )
-            pitcher_options = list(pframe.apply(lambda r: (int(r["key_mlbam"]), r["full_name"]), axis=1))
+            pitcher_options = list(pframe.itertuples(index=False, name=None))  # [(pitcher_id, pitcher_name), ...]
         else:
             pitcher_options = []
 
         if not pitcher_options:
-            st.info(f"No pitchers for {team} match the current filter.")
+            st.info(f"No pitchers for {team} on {date.strftime('%b %d, %Y')}.")
             pitcher_id = None
         else:
             selected_pitcher = st.selectbox(
                 "Pitcher",
                 options=pitcher_options,
-                format_func=(lambda t: t[1]),
+                format_func=lambda t: t[1],
             )
             pitcher_id = selected_pitcher[0] if selected_pitcher else None
-
-    st.session_state["_current_selection"] = {
-        "pitcher_id": int(pitcher_id) if pitcher_id is not None else None,
-        "date_str": date.strftime("%Y-%m-%d"),
-    }
 
     # Actions
     generate = st.button("Generate", type="primary")
